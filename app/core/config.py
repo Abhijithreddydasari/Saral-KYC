@@ -1,0 +1,44 @@
+"""Application configuration and settings management."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import List
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Centralized application settings."""
+
+    app_name: str = "Saral-KYC API"
+    env: str = "dev"
+    api_v1_prefix: str = "/api/v1"
+    cors_origins: List[str] = ["*"]
+
+    secret_key: str = Field(default="")
+    encryption_key: str = Field(default="")
+    access_token_expire_minutes: int = 60
+
+    database_url: str = "sqlite:///./saral_kyc.db"
+    storage_path: str = "./storage"
+
+    log_level: str = "INFO"
+    enable_request_logging: bool = True
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def storage_dir(self) -> Path:
+        return Path(self.storage_path).resolve()
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Returns a cached Settings instance."""
+    settings = Settings()
+    settings.storage_dir.mkdir(parents=True, exist_ok=True)
+    return settings
+
