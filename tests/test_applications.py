@@ -77,3 +77,50 @@ def test_risk_assessment_endpoint(monkeypatch, client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json()["risk_band"] == "low"
 
+
+def test_application_summary_endpoint(client: TestClient) -> None:
+    payload = {"full_name": "Summary User"}
+    create_resp = client.post("/api/v1/kyc/applications", json=payload)
+    application_id = create_resp.json()["id"]
+
+    response = client.get(f"/api/v1/kyc/applications/{application_id}/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["application"]["id"] == application_id
+    assert body["timeline"]["application_id"] == application_id
+
+
+def test_document_preview_endpoint(monkeypatch, client: TestClient, tmp_path) -> None:
+    payload = {"full_name": "Preview User"}
+    create_resp = client.post("/api/v1/kyc/applications", json=payload)
+    application_id = create_resp.json()["id"]
+
+    file_path = tmp_path / "preview.png"
+    file_path.write_bytes(b"preview-bytes")
+
+    async def fake_ingest(application, artifact, file):
+        artifact.status = DocumentStatus.PROCESSED
+        artifact.authenticity_score = 0.9
+        artifact.liveness_score = 0.8
+        artifact.storage_path = str(file_path)
+        artifact.extraction_payload = {"name": ["Preview User"]}
+        artifact.anomaly_flags = []
+        return artifact
+
+    monkeypatch.setattr(applications_router.pipeline, "ingest_and_analyze", AsyncMock(side_effect=fake_ingest))
+
+    files = {"file": ("preview.png", io.BytesIO(b"fake"), "image/png")}
+    data = {"doc_type": DocumentType.PAN.value}
+    upload_resp = client.post(f"/api/v1/kyc/applications/{application_id}/documents", data=data, files=files)
+    doc_id = upload_resp.json()["id"]
+
+    preview_resp = client.get(f"/api/v1/kyc/applications/{application_id}/documents/{doc_id}/preview")
+    assert preview_resp.status_code == 200
+    preview_body = preview_resp.json()
+    assert preview_body["document"]["id"] == doc_id
+    assert preview_body["mime_type"] == "image/png"
+
+    download_url = preview_body["download_url"]
+    download_resp = client.get(download_url)
+    assert download_resp.status_code == 200
+    assert download_resp.content == b"preview-bytes"

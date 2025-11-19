@@ -8,6 +8,8 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from app.models.enums import ApplicationStatus, DocumentStatus, DocumentType
+from app.schemas.risk import RiskDecisionRead
+from app.schemas.workflow import ApplicationTimeline
 
 
 class DocumentBase(BaseModel):
@@ -54,4 +56,17 @@ class ApplicationRead(ApplicationBase):
 
     class Config:
         from_attributes = True
+
+
+class DocumentPreviewResponse(BaseModel):
+    document: DocumentRead
+    download_url: str
+    mime_type: Optional[str]
+    available_actions: List[str] = Field(default_factory=lambda: ["download"])
+
+
+class ApplicationSummary(BaseModel):
+    application: ApplicationRead
+    latest_risk: Optional[RiskDecisionRead]
+    timeline: ApplicationTimeline
 
