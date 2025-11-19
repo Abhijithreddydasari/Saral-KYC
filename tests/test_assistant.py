@@ -19,3 +19,10 @@ def test_chat_endpoint(monkeypatch, client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.json()["reply"] == "Hello!"
 
+
+def test_assistant_bootstrap_endpoint(client: TestClient) -> None:
+    resp = client.get("/api/v1/assist/session/bootstrap")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "languages" in body
+    assert "suggestion_prompts" in body

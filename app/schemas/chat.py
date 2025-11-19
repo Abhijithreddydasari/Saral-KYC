@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import List
+
 from pydantic import BaseModel, Field
 
 
@@ -15,4 +17,12 @@ class ChatMessageResponse(BaseModel):
     language: str
     safety_passed: bool
     metadata: dict
+
+
+class AssistantBootstrapResponse(BaseModel):
+    welcome: str
+    languages: List[str]
+    safety_disclaimer: str
+    suggestion_prompts: List[str]
+    rate_limits: dict
 

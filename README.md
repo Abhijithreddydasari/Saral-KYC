@@ -63,3 +63,53 @@ The Saral-KYC architecture operates as a **multi-layered AI orchestration pipeli
 -   **Compliance:** Full explainability and auditable decisions reduce regulatory risk.
     
 -   **Scalability:** Cloud-native microservices integrate easily with legacy banking systems.
+
+----------
+
+## Backend quickstart
+
+```bash
+uvicorn app.main:app --reload
+```
+
+- Configuration lives in `app/core/config.py`. Document weights, metadata thresholds, and similarity cutoffs are now tunable without touching code.
+- New ML telemetry (metadata, layout, language, entity overlap) is surfaced in `DocumentArtifact.model_trace` and consumed by the enriched risk engine (`FeatureVector` + fairness counters).
+- Key API additions for the frontend bridge:
+  - `GET /api/v1/kyc/applications/{id}/summary`
+  - `GET /api/v1/kyc/applications/{id}/documents/{doc_id}/preview`
+  - `GET /api/v1/kyc/documents/{doc_id}/download`
+  - `GET /api/v1/assist/session/bootstrap`
+
+Run the test suite any time with:
+
+```bash
+pytest
+```
+
+----------
+
+## Frontend (Next.js + Tailwind + shadcn/ui)
+
+The repository now ships with a `/frontend` workspace that consumes the FastAPI hooks for both the applicant wizard and the operator console.
+
+1. Install Node.js 18+ (e.g., via [https://nodejs.org](https://nodejs.org)) – required for Next.js packages.
+2. Configure the API base URL:
+
+   ```bash
+   cd frontend
+   cp env.example .env.local  # update NEXT_PUBLIC_API_BASE_URL if needed
+   ```
+
+3. Install dependencies and start the dev server (once Node is available):
+
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+What’s included out of the box:
+
+- `src/app/wizard` — drag/drop upload stepper with live status indicators for applicants.
+- `src/app/ops` — staff dashboard showing application list, risk SHAP factors, document previews, timeline, and the multilingual assistant drawer.
+- `src/lib/api-client.ts` — typed fetch wrapper that respects `NEXT_PUBLIC_API_BASE_URL`.
+- shadcn/ui primitives (`components/ui/*`) plus design tokens via Tailwind for quick feature work.

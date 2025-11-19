@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     enable_request_logging: bool = True
 
+    doc_stage_weight_vision: float = 0.35
+    doc_stage_weight_ocr: float = 0.35
+    doc_stage_weight_forgery: float = 0.2
+    doc_stage_weight_crossdoc: float = 0.1
+    doc_similarity_threshold: float = 0.6
+    doc_metadata_max_drift_minutes: int = 90
+    doc_language_mismatch_penalty: float = 0.2
+    doc_layout_anomaly_threshold: float = 0.35
+    doc_entity_overlap_threshold: float = 0.4
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

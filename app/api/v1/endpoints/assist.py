@@ -9,13 +9,30 @@ from app.api.deps.db import get_db
 from app.models.application import KycApplication
 from app.models.audit import AuditAction
 from app.models.workflow import ConversationRole, ConversationTurn
-from app.schemas.chat import ChatMessageRequest, ChatMessageResponse
+from app.schemas.chat import AssistantBootstrapResponse, ChatMessageRequest, ChatMessageResponse
 from app.services.audit import AuditLogger
 from app.services.conversational import ConversationalAgent
 
 router = APIRouter(prefix="/assist", tags=["assistant"])
 agent = ConversationalAgent()
 audit_logger = AuditLogger()
+
+
+@router.get("/session/bootstrap", response_model=AssistantBootstrapResponse)
+def bootstrap_session() -> AssistantBootstrapResponse:
+    """Provides metadata for initializing the assistant widget."""
+    return AssistantBootstrapResponse(
+        welcome="Namaste! I’m Saral, your multilingual KYC assistant.",
+        languages=["en", "hi", "bn"],
+        safety_disclaimer="Conversations are monitored and logged for compliance.",
+        suggestion_prompts=[
+            "What documents are pending for my application?",
+            "Can you escalate my KYC review?",
+            "How long until verification completes?",
+            "Send me the latest status update.",
+        ],
+        rate_limits={"per_minute": 5, "per_hour": 30},
+    )
 
 
 @router.post("/chat", response_model=ChatMessageResponse)

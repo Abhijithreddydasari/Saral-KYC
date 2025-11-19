@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import mimetypes
+from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
 from app.api.deps.db import get_db
@@ -12,7 +15,13 @@ from app.models.application import DocumentArtifact, KycApplication
 from app.models.audit import AuditAction
 from app.models.enums import ApplicationStatus, DocumentStatus, DocumentType
 from app.models.risk import RiskDecision
-from app.schemas.application import ApplicationCreate, ApplicationRead, DocumentRead
+from app.schemas.application import (
+    ApplicationCreate,
+    ApplicationRead,
+    ApplicationSummary,
+    DocumentPreviewResponse,
+    DocumentRead,
+)
 from app.schemas.risk import RiskAssessmentRequest, RiskDecisionRead
 from app.schemas.workflow import (
     ApplicationTimeline,
@@ -198,6 +207,77 @@ def get_timeline(application_id: int, session: Session = Depends(get_db)) -> App
     application.notifications = session.exec(select(NotificationEvent).where(NotificationEvent.application_id == application_id)).all()
 
     return timeline_builder.build(application)
+
+
+@router.get(
+    "/applications/{application_id}/summary",
+    response_model=ApplicationSummary,
+)
+def get_application_summary(application_id: int, session: Session = Depends(get_db)) -> ApplicationSummary:
+    application = session.get(KycApplication, application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
+    application.documents = documents
+    application.risk_decisions = session.exec(
+        select(RiskDecision).where(RiskDecision.application_id == application_id).order_by(RiskDecision.created_at.desc())
+    ).all()
+    application.review_tasks = session.exec(select(ReviewTask).where(ReviewTask.application_id == application_id)).all()
+    application.notifications = session.exec(select(NotificationEvent).where(NotificationEvent.application_id == application_id)).all()
+    timeline = timeline_builder.build(application)
+
+    latest_risk = session.exec(
+        select(RiskDecision)
+        .where(RiskDecision.application_id == application_id)
+        .order_by(RiskDecision.created_at.desc())
+    ).first()
+
+    return ApplicationSummary(application=application, latest_risk=latest_risk, timeline=timeline)
+
+
+@router.get(
+    "/applications/{application_id}/documents/{document_id}/preview",
+    response_model=DocumentPreviewResponse,
+)
+def get_document_preview(
+    application_id: int,
+    document_id: int,
+    session: Session = Depends(get_db),
+) -> DocumentPreviewResponse:
+    document = session.get(DocumentArtifact, document_id)
+    if not document or document.application_id != application_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    download_url = f"/api/v1/kyc/documents/{document_id}/download"
+    mime_type, _ = mimetypes.guess_type(document.storage_path or "")
+    available_actions = ["download", "share"]
+    return DocumentPreviewResponse(
+        document=document,
+        download_url=download_url,
+        mime_type=mime_type,
+        available_actions=available_actions,
+    )
+
+
+@router.get("/documents/{document_id}/download")
+def download_document(document_id: int, session: Session = Depends(get_db)) -> FileResponse:
+    document = session.get(DocumentArtifact, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not document.storage_path:
+        raise HTTPException(status_code=404, detail="Document storage unavailable")
+
+    file_path = Path(document.storage_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Document file missing")
+
+    media_type, _ = mimetypes.guess_type(file_path.name)
+    return FileResponse(
+        path=file_path,
+        media_type=media_type or "application/octet-stream",
+        filename=file_path.name,
+    )
 
 
 @router.post(
