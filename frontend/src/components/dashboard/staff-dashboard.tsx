@@ -5,8 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api-client";
@@ -164,7 +162,7 @@ function RiskFactorsPanel({ summary, loading }: { summary: ApplicationSummary | 
         {loading ? <p className="text-muted-foreground">Loading…</p> : null}
         {!loading && !factors ? <p className="text-muted-foreground">No decision yet.</p> : null}
         {Array.isArray(factors)
-          ? factors.map((factor: any) => (
+          ? factors.map((factor: { id: string; weight: number; value: string; detail: string }) => (
               <div key={factor.id} className="rounded-lg border p-3">
                 <div className="flex items-center justify-between">
                   <p className="font-medium">{factor.id.replace("_", " ")}</p>
