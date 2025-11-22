@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     doc_layout_anomaly_threshold: float = 0.35
     doc_entity_overlap_threshold: float = 0.4
 
+    # Model Paths
+    model_dir_vision: str = "./app/models_data/vision/donut-docvqa"
+    model_dir_forgery: str = "./app/models_data/forgery/2.7_80x80_MiniFASNetV2.pth"
+    model_spacy_ner: str = "en_core_web_md"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

@@ -308,6 +308,116 @@ class OCRClient(BaseInferenceClient):
         return output
 
 
+class NERClient(BaseInferenceClient):
+    """Named Entity Recognition using SpaCy."""
+
+    def __init__(
+        self,
+        model_name: str = "en_core_web_md",
+        cache_enabled: bool = True,
+        cache_size: int = 64,
+        max_retries: int = 1,
+        retry_backoff: float = 0.1,
+    ) -> None:
+        super().__init__(
+            cache_prefix="ner",
+            cache_enabled=cache_enabled,
+            cache_size=cache_size,
+            max_retries=max_retries,
+            retry_backoff=retry_backoff,
+        )
+        self.model_name = model_name
+        self._nlp = None
+
+    def extract_entities(self, text: str) -> StageOutput:
+        fingerprint = _text_fingerprint(text, self.model_name)
+        cache_key = self._cache_key("spacy", str(hash(text)))
+        cached = self._get_cached(cache_key, fingerprint)
+        if cached:
+            return cached
+
+        def infer() -> StageOutput:
+            start = time.perf_counter()
+            metadata = {"model": self.model_name, "stage": "ner"}
+            
+            if not text:
+                 latency = (time.perf_counter() - start) * 1000
+                 return StageOutput(
+                    payload={"entities": {}},
+                    confidence=0.0,
+                    latency_ms=latency,
+                    metadata={**metadata, "status": "empty_text"},
+                )
+
+            try:
+                import spacy
+            except ImportError:
+                latency = (time.perf_counter() - start) * 1000
+                return StageOutput(
+                    payload={"entities": {}},
+                    confidence=0.0,
+                    latency_ms=latency,
+                    metadata={**metadata, "status": "skipped"},
+                    error="missing_spacy",
+                    retryable=False,
+                )
+
+            if self._nlp is None:
+                try:
+                    self._nlp = spacy.load(self.model_name)
+                except OSError:
+                     logger.warning(f"SpaCy model {self.model_name} not found. Trying to download...")
+                     try:
+                         # Fallback to blank if download not possible in runtime or use subprocess
+                         # Ideally models are pre-downloaded.
+                         from spacy.cli import download
+                         download(self.model_name)
+                         self._nlp = spacy.load(self.model_name)
+                     except Exception as exc:
+                         logger.error(f"Failed to load or download SpaCy model {self.model_name}: {exc}")
+                         self._nlp = spacy.blank("en") # Fallback
+                except Exception as exc:
+                    logger.warning("Failed to load SpaCy model %s: %s", self.model_name, exc)
+                    latency = (time.perf_counter() - start) * 1000
+                    return StageOutput(
+                        payload={"entities": {}},
+                        latency_ms=latency,
+                        metadata={**metadata, "status": "load_error"},
+                        error=str(exc),
+                        retryable=False,
+                    )
+
+            try:
+                doc = self._nlp(text)
+                entities: Dict[str, Any] = {"raw_text": text[:512]}
+                for ent in doc.ents:
+                    entities.setdefault(ent.label_, []).append(ent.text)
+                
+                entity_count = sum(len(values) for key, values in entities.items() if key != "raw_text" and isinstance(values, list))
+                confidence = min(1.0, entity_count / 5) if entity_count else 0.4
+                
+                latency = (time.perf_counter() - start) * 1000
+                return StageOutput(
+                    payload={"entities": entities},
+                    confidence=confidence,
+                    latency_ms=latency,
+                    metadata={**metadata, "status": "ok", "entity_count": entity_count},
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("NER inference failed: %s", exc)
+                latency = (time.perf_counter() - start) * 1000
+                return StageOutput(
+                    payload={"entities": {}},
+                    latency_ms=latency,
+                    metadata={**metadata, "status": "runtime_error"},
+                    error=str(exc),
+                )
+
+        output = self._run_with_retries(infer)
+        self._set_cache(cache_key, fingerprint, output)
+        return output
+
+
 class EmbeddingClient(BaseInferenceClient):
     """SentenceTransformer-backed similarity comparer."""
 
@@ -429,7 +539,7 @@ class ForgeryClient(BaseInferenceClient):
             metadata = {"stage": "cv_forgery", "doc_type": doc_type.value}
             try:
                 import cv2
-                import numpy as np  # noqa: F401
+                import numpy as np
             except ImportError:
                 logger.debug("OpenCV/Numpy missing; returning neutral authenticity")
                 latency = (time.perf_counter() - start) * 1000
@@ -451,12 +561,62 @@ class ForgeryClient(BaseInferenceClient):
                     error="image_not_found",
                     retryable=False,
                 )
-
+            
+            # Default Heuristic
             variance = float(cv2.Laplacian(img, cv2.CV_64F).var())
             authenticity = max(0.1, min(1.0, variance / 1000))
             liveness = None
-            if doc_type == DocumentType.SELFIE:
-                liveness = max(0.1, min(1.0, variance / 500))
+            
+            # MiniFASNet Inference (PyTorch) if available
+            model_path = Path("app/models_data/forgery/2.7_80x80_MiniFASNetV2.pth")
+            if doc_type == DocumentType.SELFIE and model_path.exists():
+                try:
+                    import torch
+                    from app.services.minifasnet import MiniFASNetV2
+
+                    # Initialize model
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                    model = MiniFASNetV2(conv6_kernel=(7, 7)).to(device)
+                    state_dict = torch.load(str(model_path), map_location=device)
+                    
+                    # Fix keys if they have 'module.' prefix (common in DataParallel)
+                    new_state_dict = {}
+                    for k, v in state_dict.items():
+                        name = k[7:] if k.startswith('module.') else k
+                        new_state_dict[name] = v
+                    model.load_state_dict(new_state_dict)
+                    model.eval()
+                    
+                    # Preprocessing (resize to 80x80, transpose to C,H,W, normalize)
+                    resized = cv2.resize(img, (80, 80))
+                    # MiniFASNet expects [0, 255] input? Or normalized?
+                    # Standard is usually ToTensor() which is [0, 1] if using torchvision transforms
+                    # or manual division. The paper code uses standard torchvision transforms.
+                    # We will assume standard ToTensor-like behavior: (H,W,C) -> (C,H,W) / 255.0
+                    inp = resized.astype(np.float32).transpose(2, 0, 1) # C H W
+                    inp = torch.from_numpy(inp).unsqueeze(0).to(device)
+                    
+                    with torch.no_grad():
+                        logits = model(inp)
+                        probs = torch.nn.functional.softmax(logits, dim=1).cpu().numpy()
+                    
+                    # Class 1 is "Live", Class 0 or 2 are Spoof depending on specific training. 
+                    # Usually index 1 is live for binary, but MiniFASNet original has 3 classes (Live, Spoof1, Spoof2)?
+                    # Actually looking at definition: num_classes=3 by default.
+                    # In many anti-spoofing datasets: 1=Live, 0,2=Spoof.
+                    # Let's assume index 1 is Live.
+                    liveness_score = float(probs[0][1])
+                    liveness = max(0.0, min(1.0, liveness_score))
+                    
+                    # Heuristic blend
+                    authenticity = (authenticity + liveness) / 2
+                    metadata["model"] = "MiniFASNetV2"
+                except Exception as e:
+                    logger.warning(f"MiniFASNet inference failed: {e}")
+                    # Fallback to variance heuristic
+                    liveness = max(0.1, min(1.0, variance / 500))
+            elif doc_type == DocumentType.SELFIE:
+                 liveness = max(0.1, min(1.0, variance / 500))
 
             latency = (time.perf_counter() - start) * 1000
             return StageOutput(
@@ -477,6 +637,7 @@ class MLClientRegistry:
 
     vision: VisionModelClient
     ocr: OCRClient
+    ner: NERClient
     embeddings: EmbeddingClient
     forgery: ForgeryClient
 
@@ -491,6 +652,7 @@ class MLClientRegistry:
         return cls(
             vision=VisionModelClient(model_name=vision_model_name),
             ocr=OCRClient(languages=ocr_languages),
+            ner=NERClient(),
             embeddings=EmbeddingClient(model_name=embedding_model_name, threshold=embedding_threshold),
             forgery=ForgeryClient(),
         )
