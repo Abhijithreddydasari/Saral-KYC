@@ -178,7 +178,7 @@ class DocumentPipeline:
 
     def _run_ocr_ner(self, file_path: Path, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
         text = self._perform_easyocr(file_path, stage_outputs)
-        entities = self._run_spacy_ner(text, stage_outputs)
+        entities = self._run_ner_client(text, stage_outputs)
         return entities
 
     def _perform_easyocr(self, file_path: Path, stage_outputs: Dict[str, StageOutput]) -> str:
@@ -186,66 +186,10 @@ class DocumentPipeline:
         self._record_stage(stage_outputs, "ocr", output)
         return output.payload.get("text", "")
 
-    def _run_spacy_ner(self, text: str, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
-        metadata = {"stage": "ner"}
-        if not text:
-            self._record_stage(
-                stage_outputs,
-                "ner",
-                StageOutput(payload={"entity_count": 0}, confidence=0.0, metadata={**metadata, "status": "no_text"}),
-            )
-            return {}
-        try:
-            import spacy
-        except ImportError:
-            logger.debug("spaCy not installed; returning plain text fallback")
-            fallback = {"raw_text": text[:512]}
-            self._record_stage(
-                stage_outputs,
-                "ner",
-                StageOutput(
-                    payload={"entity_count": 0},
-                    confidence=0.2,
-                    metadata={**metadata, "status": "skipped"},
-                    error="missing_spacy",
-                ),
-            )
-            return fallback
-
-        try:
-            nlp = spacy.blank("en")
-        except Exception as exc:  # pragma: no cover
-            logger.warning("spaCy init failed: %s", exc)
-            fallback = {"raw_text": text[:512]}
-            self._record_stage(
-                stage_outputs,
-                "ner",
-                StageOutput(
-                    payload={"entity_count": 0},
-                    confidence=0.2,
-                    metadata={**metadata, "status": "init_error"},
-                    error=str(exc),
-                ),
-            )
-            return fallback
-
-        doc = nlp(text)
-        entities: Dict[str, Any] = {"raw_text": text[:512]}
-        for ent in doc.ents:
-            entities.setdefault(ent.label_, []).append(ent.text)
-
-        entity_count = sum(len(values) for key, values in entities.items() if isinstance(values, list))
-        confidence = min(1.0, entity_count / 5) if entity_count else 0.4
-        self._record_stage(
-            stage_outputs,
-            "ner",
-            StageOutput(
-                payload={"entity_count": entity_count},
-                confidence=confidence,
-                metadata={**metadata, "status": "ok"},
-            ),
-        )
-        return entities
+    def _run_ner_client(self, text: str, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
+        output = self.clients.ner.extract_entities(text)
+        self._record_stage(stage_outputs, "ner", output)
+        return output.payload.get("entities", {})
 
     def _run_forgery_and_liveness(
         self,
@@ -622,4 +566,3 @@ class DocumentPipeline:
             else:
                 snapshot[key] = value
         return snapshot
-
