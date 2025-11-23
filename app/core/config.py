@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     app_name: str = "Saral-KYC API"
     env: str = "dev"
+    doc_pipeline_mode: str = "full"
     api_v1_prefix: str = "/api/v1"
     cors_origins: List[str] = ["*"]
 

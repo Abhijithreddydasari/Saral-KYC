@@ -46,6 +46,27 @@ notification_service = NotificationService()
 timeline_builder = TimelineBuilder()
 audit_logger = AuditLogger()
 
+_DOC_TYPE_ALIASES = {
+    "application/pdf": DocumentType.PDF,
+    "image/jpeg": DocumentType.JPEG,
+    "image/jpg": DocumentType.JPG,
+    "image/png": DocumentType.PNG,
+    "jpeg": DocumentType.JPEG,
+    "jpg": DocumentType.JPG,
+    "png": DocumentType.PNG,
+    "pdf": DocumentType.PDF,
+}
+
+
+def _parse_doc_type(raw_value: str | None) -> DocumentType:
+    if not raw_value:
+        return DocumentType.OTHER
+    normalized = raw_value.strip().lower()
+    try:
+        return DocumentType(normalized)
+    except ValueError:
+        return _DOC_TYPE_ALIASES.get(normalized, DocumentType.OTHER)
+
 
 @router.post("/applications", response_model=ApplicationRead, status_code=status.HTTP_201_CREATED)
 def create_application(payload: ApplicationCreate, session: Session = Depends(get_db)) -> ApplicationRead:
@@ -91,7 +112,7 @@ def get_application(application_id: int, session: Session = Depends(get_db)) -> 
 )
 async def upload_document(
     application_id: int,
-    doc_type: DocumentType = Form(...),
+    doc_type: str = Form(...),
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
 ) -> DocumentRead:
@@ -99,7 +120,8 @@ async def upload_document(
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    artifact = DocumentArtifact(application_id=application_id, doc_type=doc_type, status=DocumentStatus.UPLOADED)
+    resolved_doc_type = _parse_doc_type(doc_type)
+    artifact = DocumentArtifact(application_id=application_id, doc_type=resolved_doc_type, status=DocumentStatus.UPLOADED)
     session.add(artifact)
     session.flush()
 
@@ -112,7 +134,7 @@ async def upload_document(
         AuditAction.DOCUMENT_UPLOADED,
         "document_artifact",
         str(artifact.id),
-        {"doc_type": doc_type.value},
+        {"doc_type": artifact.doc_type.value},
     )
     session.add(artifact)
     session.commit()
