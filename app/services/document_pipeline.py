@@ -47,6 +47,8 @@ class DocumentPipeline:
         self.ocr_languages = ocr_languages
 
         settings = get_settings()
+        self.pipeline_mode = settings.doc_pipeline_mode.lower()
+        self.mock_mode = self.pipeline_mode == "mock"
         self.stage_weights = self._normalize_weights(
             {
                 "vision": settings.doc_stage_weight_vision,
@@ -87,14 +89,25 @@ class DocumentPipeline:
         doc.storage_path = str(saved_path)
         doc.status = DocumentStatus.PROCESSING
 
-        loop = asyncio.get_running_loop()
-        insights = await loop.run_in_executor(
-            None,
-            self._analyze_file,
-            saved_path,
-            doc.doc_type,
-            self._historical_entities(application),
+        logger.info(
+            "Document ingestion started app_id=%s doc_id=%s doc_type=%s mode=%s",
+            application.id,
+            doc.id,
+            doc.doc_type.value,
+            self.pipeline_mode,
         )
+
+        if self.mock_mode:
+            insights = self._mock_insights(saved_path, doc.doc_type)
+        else:
+            loop = asyncio.get_running_loop()
+            insights = await loop.run_in_executor(
+                None,
+                self._analyze_file,
+                saved_path,
+                doc.doc_type,
+                self._historical_entities(application),
+            )
 
         doc.extraction_payload = insights.extracted_entities
         doc.authenticity_score = insights.authenticity_score
@@ -102,6 +115,14 @@ class DocumentPipeline:
         doc.anomaly_flags = insights.anomaly_flags
         doc.model_trace = insights.model_trace
         doc.status = DocumentStatus.PROCESSED
+
+        logger.info(
+            "Document ingestion finished doc_id=%s status=%s authenticity=%.2f anomalies=%s",
+            doc.id,
+            doc.status.value,
+            doc.authenticity_score or 0.0,
+            ",".join(doc.anomaly_flags or []) or "none",
+        )
         return doc
 
     def _analyze_file(
@@ -154,6 +175,46 @@ class DocumentPipeline:
                     "metadata_signal": round(metadata_signal, 3),
                 },
                 "stages": stage_metrics,
+            },
+        )
+
+    def _mock_insights(self, file_path: Path, doc_type: DocumentType) -> DocumentInsights:
+        """Return deterministic mock insights for fast local testing."""
+        seed = int(hashlib.sha1(f"{doc_type.value}:{file_path}".encode("utf-8")).hexdigest(), 16)
+        base_score = 0.65 + ((seed % 30) / 100)
+        authenticity_score = round(min(0.95, base_score), 2)
+        liveness_score = round(0.7 + ((seed >> 8) % 20) / 100, 2) if doc_type == DocumentType.SELFIE else None
+        anomaly_flags: List[str] = []
+        if seed % 11 == 0:
+            anomaly_flags.append("mock_timestamp_drift")
+        stage_scores = {
+            "vision": min(1.0, authenticity_score + 0.05),
+            "ocr": max(0.4, authenticity_score - 0.1),
+            "forgery": authenticity_score,
+            "crossdoc": 0.8,
+        }
+        extraction_payload = {
+            "document_type": doc_type.value,
+            "file_name": file_path.name,
+            "reference_number": f"MOCK-{seed % 100000:05d}",
+            "file_size_bytes": file_path.stat().st_size if file_path.exists() else 0,
+        }
+        logger.info(
+            "Mock pipeline returning synthetic insights doc_type=%s seed=%s authenticity=%.2f",
+            doc_type.value,
+            seed & 0xFFFFFFFF,
+            authenticity_score,
+        )
+        return DocumentInsights(
+            extracted_entities=extraction_payload,
+            authenticity_score=authenticity_score,
+            liveness_score=liveness_score,
+            anomaly_flags=anomaly_flags,
+            model_trace={
+                "mode": "mock",
+                "reason": "doc_pipeline_mode=mock",
+                "stage_scores": stage_scores,
+                "seed": seed & 0xFFFFFFFF,
             },
         )
 
