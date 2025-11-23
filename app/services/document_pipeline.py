@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import UploadFile
 
@@ -64,6 +64,11 @@ class DocumentPipeline:
         self.language_penalty = settings.doc_language_mismatch_penalty
         self.layout_anomaly_threshold = settings.doc_layout_anomaly_threshold
         self.entity_overlap_threshold = settings.doc_entity_overlap_threshold
+        self.enable_vision_stage = getattr(settings, "doc_enable_vision_stage", True)
+        self.enable_ocr_stage = getattr(settings, "doc_enable_ocr_stage", True)
+        self.enable_embeddings_stage = getattr(settings, "doc_enable_embeddings_stage", True)
+        self.enable_metadata_stage = getattr(settings, "doc_enable_metadata_stage", True)
+        self.embedding_min_chars = getattr(settings, "doc_embedding_min_chars", 80)
         self._language_patterns = {
             "hi": re.compile(r"[\u0900-\u097F]"),
             "bn": re.compile(r"[\u0980-\u09FF]"),
@@ -86,10 +91,7 @@ class DocumentPipeline:
         doc: DocumentArtifact,
         file: UploadFile,
     ) -> DocumentArtifact:
-        relative_path = f"{application.reference_id}/{doc.doc_type.value}/{doc.id}_{file.filename}"
-        saved_path = self.storage.save_upload(file, relative_path)
-
-        doc.storage_path = str(saved_path)
+        saved_path = self.store_document_file(application, doc, file)
         doc.status = DocumentStatus.PROCESSING
 
         logger.info(
@@ -100,24 +102,9 @@ class DocumentPipeline:
             self.pipeline_mode,
         )
 
-        if self.mock_mode:
-            insights = self._mock_insights(saved_path, doc.doc_type)
-        else:
-            loop = asyncio.get_running_loop()
-            insights = await loop.run_in_executor(
-                None,
-                self._analyze_file,
-                saved_path,
-                doc.doc_type,
-                self._historical_entities(application),
-            )
+        insights = await self._run_full_analysis(saved_path, doc, application)
 
-        doc.extraction_payload = insights.extracted_entities
-        doc.authenticity_score = insights.authenticity_score
-        doc.liveness_score = insights.liveness_score
-        doc.anomaly_flags = insights.anomaly_flags
-        doc.model_trace = insights.model_trace
-        doc.status = DocumentStatus.PROCESSED
+        self._apply_insights(doc, insights)
 
         logger.info(
             "Document ingestion finished doc_id=%s status=%s authenticity=%.2f anomalies=%s",
@@ -128,6 +115,32 @@ class DocumentPipeline:
         )
         return doc
 
+    def analyze_stored_document(self, application: KycApplication, doc: DocumentArtifact) -> DocumentArtifact:
+        if not doc.storage_path:
+            raise ValueError("Document storage path missing; cannot analyze.")
+
+        insights = self._analyze_file(
+            Path(doc.storage_path),
+            doc.doc_type,
+            self._historical_entities(application),
+        )
+        self._apply_insights(doc, insights)
+        return doc
+
+    def store_document_file(self, application: KycApplication, doc: DocumentArtifact, file: UploadFile) -> Path:
+        relative_path = f"{application.reference_id}/{doc.doc_type.value}/{doc.id}_{file.filename}"
+        saved_path = self.storage.save_upload(file, relative_path)
+        doc.storage_path = str(saved_path)
+        return saved_path
+
+    def _apply_insights(self, doc: DocumentArtifact, insights: DocumentInsights) -> None:
+        doc.extraction_payload = insights.extracted_entities
+        doc.authenticity_score = insights.authenticity_score
+        doc.liveness_score = insights.liveness_score
+        doc.anomaly_flags = insights.anomaly_flags
+        doc.model_trace = insights.model_trace
+        doc.status = DocumentStatus.PROCESSED
+
     def _analyze_file(
         self,
         file_path: Path,
@@ -135,14 +148,63 @@ class DocumentPipeline:
         historical_entities: Optional[Dict[str, Any]],
     ) -> DocumentInsights:
         stage_outputs: Dict[str, StageOutput] = {}
-        vision_result = self._run_vision_transformer(file_path, stage_outputs)
-        ocr_entities = self._run_ocr_ner(file_path, stage_outputs)
+        vision_result: Dict[str, Any] = {}
+        if self.enable_vision_stage:
+            vision_result = self._run_vision_transformer(file_path, stage_outputs)
+        else:
+            self._record_stage(
+                stage_outputs,
+                "vision",
+                StageOutput(payload={}, metadata={"stage": "vision_transformer", "status": "skipped"}, confidence=None, retryable=False),
+            )
+
+        ocr_entities: Dict[str, Any] = {}
+        ocr_text = ""
+        if self.enable_ocr_stage:
+            ocr_entities, ocr_text = self._run_ocr_ner(file_path, stage_outputs)
+        else:
+            self._record_stage(
+                stage_outputs,
+                "ocr",
+                StageOutput(payload={"text": ""}, metadata={"stage": "ocr", "status": "skipped"}, confidence=None, retryable=False),
+            )
+
         forgery, liveness = self._run_forgery_and_liveness(file_path, doc_type, stage_outputs)
-        cross_doc_flags = self._cross_document_validation(ocr_entities, historical_entities, stage_outputs)
-        metadata_flags, metadata_signal = self._metadata_cross_checks(file_path, stage_outputs)
-        layout_signal = self._layout_anomaly_score(file_path, stage_outputs)
-        language_signal = self._language_consistency_signal(vision_result, ocr_entities, stage_outputs)
-        overlap_signal = self._entity_overlap_signal(vision_result, ocr_entities, stage_outputs)
+
+        should_run_embeddings = self.enable_embeddings_stage and self._should_run_embeddings(stage_outputs.get("ocr"))
+        if should_run_embeddings:
+            cross_doc_flags = self._cross_document_validation(ocr_entities, historical_entities, stage_outputs)
+        else:
+            cross_doc_flags = []
+            self._record_stage(
+                stage_outputs,
+                "embedding",
+                StageOutput(
+                    payload={"match": True},
+                    metadata={"stage": "embeddings", "status": "skipped"},
+                    confidence=None,
+                    retryable=False,
+                ),
+            )
+
+        if self.enable_metadata_stage:
+            metadata_flags, metadata_signal = self._metadata_cross_checks(file_path, stage_outputs)
+            layout_signal = self._layout_anomaly_score(file_path, stage_outputs)
+            language_signal = self._language_consistency_signal(vision_result, ocr_entities, stage_outputs)
+            overlap_signal = self._entity_overlap_signal(vision_result, ocr_entities, stage_outputs)
+        else:
+            metadata_flags, metadata_signal = [], 0.8
+            layout_signal = language_signal = overlap_signal = 0.8
+            self._record_stage(
+                stage_outputs,
+                "metadata",
+                StageOutput(
+                    payload={"flags": []},
+                    metadata={"stage": "metadata", "status": "skipped"},
+                    confidence=metadata_signal,
+                    retryable=False,
+                ),
+            )
 
         extracted_entities = {**vision_result, **ocr_entities}
         stage_scores = self._compute_stage_scores(
@@ -159,6 +221,7 @@ class DocumentPipeline:
         authenticity_score = self._weighted_score(stage_scores)
         stage_metrics = self._stage_metrics(stage_outputs)
         anomaly_flags = self._collect_anomalies(stage_outputs, cross_doc_flags, metadata_flags)
+        self._log_stage_metrics(stage_outputs)
 
         return DocumentInsights(
             extracted_entities=extracted_entities,
@@ -235,15 +298,41 @@ class DocumentPipeline:
     def _record_stage(self, stage_outputs: Dict[str, StageOutput], stage: str, output: StageOutput) -> None:
         stage_outputs[stage] = output
 
+    def _should_run_embeddings(self, ocr_stage: Optional[StageOutput]) -> bool:
+        if not ocr_stage:
+            return True
+        text = ocr_stage.payload.get("text") if isinstance(ocr_stage.payload, dict) else ""
+        text_len = len(text or "")
+        confidence = ocr_stage.confidence or 0.0
+        return confidence < 0.6 or text_len < self.embedding_min_chars
+
+    def _log_stage_metrics(self, stage_outputs: Dict[str, StageOutput]) -> None:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        summary = {
+            name: {
+                "latency_ms": output.latency_ms,
+                "status": output.metadata.get("status") if output.metadata else None,
+            }
+            for name, output in stage_outputs.items()
+        }
+        logger.debug("Document stage metrics: %s", summary)
+
     def _run_vision_transformer(self, file_path: Path, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
         output = self.clients.vision.parse(file_path)
         self._record_stage(stage_outputs, "vision", output)
         return output.payload
 
-    def _run_ocr_ner(self, file_path: Path, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
-        text = self._perform_easyocr(file_path, stage_outputs)
+    def _run_ocr_ner(self, file_path: Path, stage_outputs: Dict[str, StageOutput]) -> Tuple[Dict[str, Any], str]:
+        ocr_output = self._perform_easyocr(file_path, stage_outputs)
+        text = ""
+        if isinstance(ocr_output, StageOutput):
+            if isinstance(ocr_output.payload, dict):
+                text = ocr_output.payload.get("text", "")
+        else:
+            text = str(ocr_output or "")
         entities = self._run_ner_client(text, stage_outputs)
-        return entities
+        return entities, text
 
     def _perform_easyocr(self, file_path: Path, stage_outputs: Dict[str, StageOutput]) -> str:
         output = self.clients.ocr.read_text(file_path)
@@ -268,7 +357,7 @@ class DocumentPipeline:
         output = self.clients.forgery.analyze(file_path, doc_type)
         self._record_stage(stage_outputs, "forgery", output)
         authenticity = output.payload.get("authenticity", 0.5)
-        liveness = output.payload.get("liveness")
+        liveness = output.payload.get("liveness") if doc_type == DocumentType.SELFIE else None
         return authenticity, liveness
 
     def _cross_document_validation(
