@@ -7,9 +7,17 @@ from typing import List
 from pydantic import BaseModel, Field
 
 
+class ChatTurn(BaseModel):
+    role: str = Field(..., description="speaker role such as user/assistant/system")
+    content: str = Field(..., min_length=1)
+    language: str | None = Field(default=None)
+
+
 class ChatMessageRequest(BaseModel):
     message: str = Field(..., min_length=2)
     application_reference_id: str | None = None
+    history: List[ChatTurn] = Field(default_factory=list)
+    system_prompt: str | None = Field(default=None)
 
 
 class ChatMessageResponse(BaseModel):

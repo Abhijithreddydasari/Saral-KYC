@@ -83,6 +83,40 @@ uvicorn app.main:app --reload
   - Existing summary/document preview endpoints continue to power the operator console.
 - SQLite lives in `saral_kyc.db`; delete the file if you need a clean slate with the new columns (`user_id`, `parent_name`, etc.).
 
+### Multilingual assistant (IndicBARTSS on CPU)
+
+- The conversational agent now loads [`ai4bharat/IndicBARTSS`](https://huggingface.co/ai4bharat/IndicBARTSS) via plain PyTorch CPU so it can chat across 11 Indic languages plus English.
+- Configure prompt behavior without code changes via the new knobs in `app/core/config.py`:
+
+  | Setting | Purpose |
+  | --- | --- |
+  | `assistant_model_name` | Hugging Face identifier (defaults to `ai4bharat/IndicBARTSS`). |
+  | `assistant_system_prompt` | Default Saral tone/instructions. |
+  | `assistant_default_language` | Fallback ISO code when detection fails. |
+  | `assistant_max_input_tokens` / `assistant_max_output_tokens` | Truncation + generation limits. |
+  | `assistant_history_limit` | Number of prior turns kept from the client request. |
+
+- Every `/assist/chat` call feeds the agent with:
+  - The user profile, preferences, document summaries, notifications, and risk signals fetched from the database.
+  - The client-provided `history` array (no server-side turn persistence per privacy requirements).
+  - An optional `system_prompt` override for workflow-specific guardrails.
+
+Example payload:
+
+```json
+{
+  "message": "मेरा केवाईसी स्टेटस बताओ?",
+  "application_reference_id": "ABC123",
+  "system_prompt": "Stay formal and cite timelines.",
+  "history": [
+    {"role": "user", "content": "I uploaded my PAN yesterday.", "language": "en"},
+    {"role": "assistant", "content": "Thanks! I'm reviewing it now.", "language": "en"}
+  ]
+}
+```
+
+The JSON response still contains the assistant metadata, and FastAPI now mirrors those details in headers such as `X-Assistant-Model`, `X-Assistant-Backend`, and token counts for observability.
+
 Run the test suite any time with:
 
 ```bash
