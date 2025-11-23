@@ -66,105 +66,75 @@ The Saral-KYC architecture operates as a **multi-layered AI orchestration pipeli
 
 ----------
 
-## Backend quickstart
+## Platform components
 
-```bash
-uvicorn app.main:app --reload
-```
+- **FastAPI backend (`app/`)** — exposes auth, KYC workflow, admin, and assistant APIs. Core services (`services/`) cover document parsing, liveness, guidance, notifications, and the risk engine. Config and security knobs live in `app/core`.
+- **Data tier** — SQLAlchemy models map to `saral_kyc.db` (SQLite by default) via `app/db`. Model bundles (Donut, MiniFASNet, IndicBARTSS) are stored under `app/models_data` and loaded lazily through `services/ml_clients.py`.
+- **Next.js frontend (`frontend/`)** — applicant wizard, risk dashboard, admin console, and conversational assistant built with App Router, Tailwind, and shadcn/ui primitives.
+- **Automation & QA** — `scripts/download_models.py` primes heavy weights, while `tests/` covers document processing, workflows, risk scoring, and the chat surface.
 
-- Configuration lives in `app/core/config.py`. Document weights, metadata thresholds, and similarity cutoffs are now tunable without touching code.
-- New ML telemetry (metadata, layout, language, entity overlap) is surfaced in `DocumentArtifact.model_trace` and consumed by the enriched risk engine (`FeatureVector` + fairness counters).
-- Key API additions for the frontend bridge:
-  - `POST /api/v1/auth/{signup|login|logout}` and `GET /api/v1/auth/me` for token-based auth.
-  - `GET /api/v1/kyc/applications/mine`, `POST /api/v1/kyc/applications/{id}/documents`, `POST /api/v1/kyc/applications/{id}/liveness`, and `POST /api/v1/kyc/applications/{id}/complete`.
-  - `GET /api/v1/kyc/applications/{id}/risk/status` for the delayed three-band status button.
-  - `POST /api/v1/assist/chat/stream` for multilingual streaming replies (JSON fallback still available at `/chat`).
-  - `GET /api/v1/admin/overview` + `GET /api/v1/admin/users/{id}` for the monitoring panel and graph view.
-  - Existing summary/document preview endpoints continue to power the operator console.
-- SQLite lives in `saral_kyc.db`; delete the file if you need a clean slate with the new columns (`user_id`, `parent_name`, etc.).
-
-### Multilingual assistant (IndicBARTSS on CPU)
-
-- The conversational agent now loads [`ai4bharat/IndicBARTSS`](https://huggingface.co/ai4bharat/IndicBARTSS) via plain PyTorch CPU so it can chat across 11 Indic languages plus English.
-- Configure prompt behavior without code changes via the new knobs in `app/core/config.py`:
-
-  | Setting | Purpose |
-  | --- | --- |
-  | `assistant_model_name` | Hugging Face identifier (defaults to `ai4bharat/IndicBARTSS`). |
-  | `assistant_system_prompt` | Default Saral tone/instructions. |
-  | `assistant_default_language` | Fallback ISO code when detection fails. |
-  | `assistant_max_input_tokens` / `assistant_max_output_tokens` | Truncation + generation limits. |
-  | `assistant_history_limit` | Number of prior turns kept from the client request. |
-
-- Every `/assist/chat` call feeds the agent with:
-  - The user profile, preferences, document summaries, notifications, and risk signals fetched from the database.
-  - The client-provided `history` array (no server-side turn persistence per privacy requirements).
-  - An optional `system_prompt` override for workflow-specific guardrails.
-
-Example payload:
-
-```json
-{
-  "message": "मेरा केवाईसी स्टेटस बताओ?",
-  "application_reference_id": "ABC123",
-  "system_prompt": "Stay formal and cite timelines.",
-  "history": [
-    {"role": "user", "content": "I uploaded my PAN yesterday.", "language": "en"},
-    {"role": "assistant", "content": "Thanks! I'm reviewing it now.", "language": "en"}
-  ]
-}
-```
-
-The JSON response still contains the assistant metadata, and FastAPI now mirrors those details in headers such as `X-Assistant-Model`, `X-Assistant-Backend`, and token counts for observability.
-
-Run the test suite any time with:
-
-```bash
-pytest
-```
-
-### Authentication & demo credentials
-
-- Users sign up or log in via the new `/auth` endpoints; the FastAPI layer issues opaque bearer tokens stored in the `user_session` table.
-- A seeded admin exists for demos:
+## Repository layout
 
 ```
-Username: admin@saral
-Password: Admin!23
+.
+├─ app/                # FastAPI application, services, schemas, models
+│  ├─ api/             # Versioned routers and dependency wiring
+│  ├─ core/            # Settings, middleware, logging, security helpers
+│  ├─ services/        # Document pipeline, risk engine, assistant, storage
+│  ├─ db/              # Session management and DB bootstrap
+│  ├─ models/          # SQLAlchemy entities (user, workflow, audit, risk)
+│  └─ schemas/         # Pydantic contracts for IO
+├─ frontend/           # Next.js 13 workspace (app router + UI components)
+├─ scripts/            # Utility scripts (model download, seeding)
+├─ storage/            # Sample uploads organized per application
+├─ tests/              # Pytest suites for APIs and services
+└─ requirements.txt    # Backend dependencies
 ```
 
-- Admin-only routes (admin monitoring APIs, `/admin/monitoring` UI) enforce `get_current_admin`.
+## Processing pipeline
 
-----------
+```mermaid
+graph LR
+    Applicant[Applicant / Ops UI\n(Next.js flows)] -->|uploads, chat, admin ops| API[FastAPI routers\n`app/api/v1`]
+    API -->|blob refs| Storage[Object storage\n`services.storage`]
+    API -->|jobs| DocPipe[Document pipeline\n`services.document_pipeline`]
+    DocPipe --> Vision[Vision models\nDonut OCR + MiniFASNet]
+    Vision --> Risk[Risk engine\n`services.risk_engine` + catalog]
+    Risk --> Workflow[Workflow & timeline\n`services.workflow` + audit]
+    Workflow --> Notify[Notifications & assistant\n`services.notification` + conversational]
+    Notify --> Applicant
+    Risk --> DB[(SQLite / SQLAlchemy models)]
+    API --> DB
+```
 
-## Frontend (Next.js + Tailwind + shadcn/ui)
+## Local development & runbook
 
-The repository now ships with a `/frontend` workspace that consumes the FastAPI hooks for both the applicant wizard and the operator console.
+1. **Prerequisites**
+   - Python 3.10+ with `pip`, Node.js 18+, and Git.
+   - (Optional) Create a virtual environment to isolate backend deps.
 
-1. Install Node.js 18+ (e.g., via [https://nodejs.org](https://nodejs.org)) – required for Next.js packages.
-2. Configure the API base URL:
-
+2. **Backend setup**
    ```bash
-   cd frontend
-   cp env.example .env.local  # update NEXT_PUBLIC_API_BASE_URL if needed
+   python -m venv .venv
+   source .venv/Scripts/activate        # use .venv/bin/activate on macOS/Linux
+   pip install -r requirements.txt
+   cp env.example .env                  # update secrets, DB URL, model paths
+   python scripts/download_models.py    # fetch Donut + MiniFASNet checkpoints
+   python -m app.db.init_db             # bootstrap SQLite with seed data
+   uvicorn app.main:app
    ```
 
-3. Install dependencies and start the dev server (once Node is available):
-
+3. **Frontend setup**
    ```bash
+   cd frontend
+   cp env.example .env.local            # set NEXT_PUBLIC_API_BASE_URL
    npm install
    npm run dev
    ```
 
-What’s included out of the box:
+4. **Suggested extras**
+   - Run `pytest` before shipping changes.
+   - Delete `saral_kyc.db` to reset demo data or point `DATABASE_URL` to Postgres.
+   - Store uploaded docs under `storage/` (the FastAPI services expect this layout).
 
-- `src/app/login` + `src/app/signup` — modern auth flow backed by the FastAPI tokens.
-- `src/app/dashboard` — tile-based launcher that disables “Create KYC Profile” after completion and runs the 10-second status reveal inline.
-- `src/app/kyc/create` — multi-step wizard (basic info → documents → selfie → confetti success).
-- `src/app/kyc/status` — dedicated risk status page mirroring the delayed dashboard button.
-- `src/app/assistant` — streaming chat interface (ChatGPT-style) with multilingual suggestions + context binding.
-- `src/app/admin/monitoring` — admin-only user list, documents, explainability, and a lightweight SVG network graph.
-- `src/app/ops` — staff dashboard showing application list, risk SHAP factors, document previews, timeline, and the multilingual assistant drawer.
-- `src/app/wizard` — legacy drag/drop upload stepper kept for reference.
-- `src/lib/api-client.ts` — typed fetch wrapper with automatic bearer headers via the `AuthProvider`.
-- shadcn/ui primitives (`components/ui/*`) plus design tokens via Tailwind for quick feature work.
+The backend serves on `http://127.0.0.1:8000` by default, and the frontend dev server renders at `http://localhost:3000`, proxying API calls via `NEXT_PUBLIC_API_BASE_URL`.
