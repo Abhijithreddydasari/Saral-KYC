@@ -1,3 +1,5 @@
+# Saral-KYC: Simple. Secure. Seamless.
+
 ### 1. Introduction
 
 Saral-KYC automates the entire Know Your Customer journey with an AI-first FastAPI backend and a Next.js applicant/admin experience. Applicants create profiles, upload documents, run selfie liveness, and receive multilingual assistance, while ops teams get anomaly-aware risk scoring, escalation guidance, and full audit trails. Every step—document ingestion, verification, risk assessment, and nudging—is orchestrated to shorten onboarding time without relaxing compliance.
