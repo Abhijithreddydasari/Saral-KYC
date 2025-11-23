@@ -1,11 +1,19 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000/api/v1";
+export const API_BASE_URL = API_BASE;
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type TokenProvider = () => string | null;
 
 export interface ApiResponse<T> {
   data: T;
   status: number;
 }
+
+let tokenProvider: TokenProvider | null = null;
+
+export const setAuthTokenProvider = (provider: TokenProvider | null) => {
+  tokenProvider = provider;
+};
 
 export class ApiClient {
   constructor(private readonly baseUrl: string = API_BASE) {}
@@ -15,6 +23,10 @@ export class ApiClient {
     const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
     if (!headers.has("Content-Type") && options.body && !isFormData) {
       headers.set("Content-Type", "application/json");
+    }
+    const token = tokenProvider?.() ?? null;
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
     }
 
     const response = await fetch(`${this.baseUrl}${path}`, {

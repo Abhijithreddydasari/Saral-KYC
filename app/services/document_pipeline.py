@@ -16,7 +16,7 @@ from fastapi import UploadFile
 from app.core.config import get_settings
 from app.models.application import DocumentArtifact, KycApplication
 from app.models.enums import DocumentStatus, DocumentType
-from app.services.ml_clients import MLClientRegistry, StageOutput
+from app.services.ml_clients import MLClientRegistry, NERClient, StageOutput
 from app.services.storage import LocalBlobStorage
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,8 @@ class DocumentPipeline:
         self.ocr_languages = ocr_languages
 
         settings = get_settings()
-        self.pipeline_mode = settings.doc_pipeline_mode.lower()
+        raw_mode = getattr(settings, "doc_pipeline_mode", "full") or "full"
+        self.pipeline_mode = raw_mode.lower()
         self.mock_mode = self.pipeline_mode == "mock"
         self.stage_weights = self._normalize_weights(
             {
@@ -76,6 +77,8 @@ class DocumentPipeline:
             ocr_languages=ocr_languages,
             embedding_threshold=self.crossdoc_threshold,
         )
+        if self.clients.ner is None:
+            self.clients.ner = NERClient()
 
     async def ingest_and_analyze(
         self,
@@ -248,6 +251,10 @@ class DocumentPipeline:
         return output.payload.get("text", "")
 
     def _run_ner_client(self, text: str, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
+        return self._run_spacy_ner(text, stage_outputs)
+
+    def _run_spacy_ner(self, text: str, stage_outputs: Dict[str, StageOutput]) -> Dict[str, Any]:
+        """Backward-compatible hook for tests that patch the old method name."""
         output = self.clients.ner.extract_entities(text)
         self._record_stage(stage_outputs, "ner", output)
         return output.payload.get("entities", {})

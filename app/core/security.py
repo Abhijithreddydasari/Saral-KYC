@@ -6,6 +6,7 @@ import secrets
 from typing import Optional
 
 from cryptography.fernet import Fernet
+from passlib.context import CryptContext
 
 
 def generate_key() -> str:
@@ -32,4 +33,20 @@ class EnvelopeEncryptor:
 
 def generate_token(length: int = 32) -> str:
     return secrets.token_urlsafe(length)
+
+
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    """Create a bcrypt hash for the provided password."""
+    return _pwd_context.hash(password)
+
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    """Verify the provided password against the stored hash."""
+    try:
+        return _pwd_context.verify(password, hashed_password)
+    except Exception:
+        return False
 

@@ -13,6 +13,7 @@ from app.utils.ids import short_uuid
 
 if TYPE_CHECKING:
     from app.models.risk import RiskDecision
+    from app.models.user import User
     from app.models.workflow import NotificationEvent, ReviewTask
 
 class KycApplication(PrimaryKeyModel, TimestampedModel, table=True):
@@ -20,20 +21,29 @@ class KycApplication(PrimaryKeyModel, TimestampedModel, table=True):
 
     reference_id: str = Field(default_factory=short_uuid, unique=True, index=True)
     full_name: str
+    parent_name: Optional[str] = Field(default=None)
+    contact_number: Optional[str] = Field(default=None, index=True)
     email: Optional[str] = Field(default=None, index=True)
     phone_number: Optional[str] = Field(default=None, index=True)
+    nationality: Optional[str] = Field(default=None)
+    address_line: Optional[str] = Field(default=None)
+    pincode: Optional[str] = Field(default=None, index=True)
     preferred_language: Optional[str] = Field(default="en")
+
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    user: Optional["User"] = Relationship()
 
     status: ApplicationStatus = Field(default=ApplicationStatus.DRAFT)
     submitted_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
 
     risk_score: Optional[float] = Field(default=None, ge=0, le=1)
     risk_reason: Optional[str] = Field(default=None)
 
-    documents: Mapped[list["DocumentArtifact"]] = Relationship(back_populates="application")
-    risk_decisions: Mapped[list["RiskDecision"]] = Relationship(back_populates="application")
-    review_tasks: Mapped[list["ReviewTask"]] = Relationship(back_populates="application")
-    notifications: Mapped[list["NotificationEvent"]] = Relationship(back_populates="application")
+    documents: list["DocumentArtifact"] = Relationship(back_populates="application")
+    risk_decisions: list["RiskDecision"] = Relationship(back_populates="application")
+    review_tasks: list["ReviewTask"] = Relationship(back_populates="application")
+    notifications: list["NotificationEvent"] = Relationship(back_populates="application")
 
 
 class DocumentArtifact(PrimaryKeyModel, TimestampedModel, table=True):

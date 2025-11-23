@@ -24,3 +24,9 @@ class RiskDecisionRead(BaseModel):
     class Config:
         from_attributes = True
 
+
+class RiskStatusResponse(BaseModel):
+    category: str
+    score: float
+    reasons: list[str]
+    generated_at: datetime

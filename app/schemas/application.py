@@ -36,8 +36,13 @@ class DocumentRead(DocumentBase):
 
 class ApplicationBase(BaseModel):
     full_name: str = Field(..., min_length=3)
+    parent_name: Optional[str] = Field(default=None, min_length=3)
+    contact_number: Optional[str] = Field(default=None, min_length=6)
     email: Optional[str] = None
     phone_number: Optional[str] = None
+    nationality: Optional[str] = None
+    address_line: Optional[str] = None
+    pincode: Optional[str] = Field(default=None, min_length=4, max_length=10)
     preferred_language: Optional[str] = Field(default="en")
 
 
@@ -48,8 +53,10 @@ class ApplicationCreate(ApplicationBase):
 class ApplicationRead(ApplicationBase):
     id: int
     reference_id: str
+    user_id: Optional[int]
     status: ApplicationStatus
     submitted_at: Optional[datetime]
+    completed_at: Optional[datetime]
     risk_score: Optional[float]
     risk_reason: Optional[str]
     documents: List[DocumentRead] = Field(default_factory=list)

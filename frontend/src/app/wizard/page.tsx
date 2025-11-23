@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { AppShell } from "@/components/layout/app-shell";
 import { StatusIndicator } from "@/components/kyc/status-indicator";
 import { DocumentUploadWizard } from "@/components/applications/document-upload-wizard";
 import { StepWizard } from "@/components/wizard/step-wizard";
@@ -24,13 +25,12 @@ export default function WizardPage() {
   };
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 px-6 py-10">
+    <AppShell title="Applicant wizard" description="Upload government documents, selfies, and track authenticity in one place.">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <Badge variant="secondary" className="mb-2">
-            Applicant wizard
+            Resume with reference ID
           </Badge>
-          <h1 className="text-3xl font-semibold">Finish KYC in quick steps</h1>
           <p className="text-sm text-muted-foreground">Use the reference ID from SMS/email to resume uploads any time.</p>
         </div>
         <div className="w-full max-w-xs">
@@ -45,10 +45,7 @@ export default function WizardPage() {
         </div>
       </div>
 
-      <DocumentUploadWizard 
-        applicationId={applicationId} 
-        onUploadComplete={handleUploaded} 
-      />
+      <DocumentUploadWizard applicationId={applicationId} onUploadComplete={handleUploaded} />
 
       <Card>
         <CardHeader>
@@ -56,20 +53,15 @@ export default function WizardPage() {
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-3">
           {Object.values(documents).length === 0 ? (
-            <p className="text-sm text-muted-foreground col-span-3 text-center py-4">No documents uploaded yet.</p>
+            <p className="col-span-3 py-4 text-center text-sm text-muted-foreground">No documents uploaded yet.</p>
           ) : (
             Object.values(documents).map((doc) => (
-              <StatusIndicator
-                key={doc.id}
-                status={doc.status}
-                score={doc.authenticity_score}
-                flags={doc.anomaly_flags}
-              />
+              <StatusIndicator key={doc.id} status={doc.status} score={doc.authenticity_score} flags={doc.anomaly_flags} />
             ))
           )}
         </CardContent>
       </Card>
-    </main>
+    </AppShell>
   );
 }
 
