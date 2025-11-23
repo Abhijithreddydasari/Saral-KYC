@@ -94,17 +94,47 @@ The Saral-KYC architecture operates as a **multi-layered AI orchestration pipeli
 ## Processing pipeline
 
 ```mermaid
-graph LR
-    Applicant[Applicant / Ops UI\n(Next.js flows)] -->|uploads, chat, admin ops| API[FastAPI routers\n`app/api/v1`]
-    API -->|blob refs| Storage[Object storage\n`services.storage`]
-    API -->|jobs| DocPipe[Document pipeline\n`services.document_pipeline`]
-    DocPipe --> Vision[Vision models\nDonut OCR + MiniFASNet]
-    Vision --> Risk[Risk engine\n`services.risk_engine` + catalog]
-    Risk --> Workflow[Workflow & timeline\n`services.workflow` + audit]
-    Workflow --> Notify[Notifications & assistant\n`services.notification` + conversational]
-    Notify --> Applicant
-    Risk --> DB[(SQLite / SQLAlchemy models)]
-    API --> DB
+flowchart LR
+    subgraph Frontend["Frontend (Next.js)"]
+        Wizard["Applicant Wizard"]
+        AssistantUI["Assistant Console"]
+        AdminConsole["Admin Monitoring"]
+    end
+    subgraph FastAPIRouters["FastAPI Routers"]
+        AuthAPI[/auth/]
+        KYCAPI[/kyc/]
+        AssistAPI[/assist/]
+        AdminAPI[/admin/]
+    end
+    subgraph Services
+        Pipeline["DocumentPipeline
+vision+ocr+forgery+embeddings"]
+        Storage["LocalBlobStorage"]
+        Risk["RiskEngine + RiskCatalog"]
+        Timeline["TimelineBuilder
+GuidanceEngine"]
+        Notify["NotificationService"]
+        Audit["AuditLogger"]
+        AssistantCore["ConversationalAgent
+(IndicBARTSS)"]
+    end
+    subgraph DataPlane["Data Plane"]
+        DB[(SQLModel on SQLite)]
+        Files(((storage/ref/...)))
+    end
+    Wizard -->|/auth, /kyc| AuthAPI
+    AuthAPI --> DB
+    Wizard --> KYCAPI
+    AssistantUI --> AssistAPI
+    AdminConsole --> AdminAPI
+    KYCAPI --> Storage
+    KYCAPI --> Pipeline
+    Pipeline --> Files
+    Pipeline --> DB
+    Pipeline --> Risk
+    Risk --> DB
+    KYCAPI --> Timeline
+    Timeline --> DB
 ```
 
 ## Local development & runbook
