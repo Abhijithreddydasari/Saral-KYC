@@ -16,7 +16,7 @@ flowchart LR
         direction TB
         M1[Donut / DocFormer\nvision transformers]
         M2[OCR Engine + IndicBERT NER]
-        M3[MiniFASNet + CNN tamper nets]
+        M3[MiniFASNet]
         M4[Sentence-BERT consistency head]
         M5[GNN-based Risk Scorer]
     end
