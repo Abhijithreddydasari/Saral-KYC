@@ -26,7 +26,6 @@ const steps = [
   { id: "basic", title: "Basic information", description: "Who are you + contact details" },
   { id: "documents", title: "Upload documents", description: "One at a time, max five" },
   { id: "liveness", title: "Liveliness check", description: "Selfie for MiniFASNet" },
-  { id: "success", title: "Success", description: "Sit back & relax" },
 ];
 
 interface BasicFormState {
@@ -188,8 +187,8 @@ export default function CreateKycPage() {
   }
 
   return (
-    <AppShell title="Create KYC profile" description="Complete the verification journey in four guided steps.">
-      <StepWizard steps={steps} activeStepId={currentStep} />
+    <AppShell title="Create KYC profile" description="Complete the verification journey in three guided steps.">
+      {currentStep !== "success" ? <StepWizard steps={steps} activeStepId={currentStep} /> : null}
 
       {loading ? (
         <Card>
@@ -303,7 +302,7 @@ export default function CreateKycPage() {
             </div>
             <div className="flex justify-end gap-3">
               <Button variant="secondary" disabled>
-                Step 2 of 4
+                Step 2 of 3
               </Button>
               <Button disabled={documents.filter((doc) => doc.doc_type !== "selfie").length === 0} onClick={() => setCurrentStep("liveness")}>
                 Continue to liveliness

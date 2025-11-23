@@ -14,13 +14,15 @@ import { Progress } from "@/components/ui/progress";
 import { apiClient } from "@/lib/api-client";
 import type { ApplicationRead, RiskStatusResponse } from "@/types/kyc";
 
+const LOADING_DURATION = 5;
+
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const [application, setApplication] = useState<ApplicationRead | null>(null);
   const [appLoading, setAppLoading] = useState(true);
   const [statusRequested, setStatusRequested] = useState(false);
-  const [countdown, setCountdown] = useState(10);
+  const [countdown, setCountdown] = useState(LOADING_DURATION);
   const [status, setStatus] = useState<RiskStatusResponse | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -69,7 +71,7 @@ export default function DashboardPage() {
     if (!application) return;
     setStatus(null);
     setStatusError(null);
-    setCountdown(10);
+    setCountdown(LOADING_DURATION);
     setStatusRequested(true);
   };
 
@@ -110,8 +112,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>KYC Status</CardTitle>
-            <CardDescription>Reveal the risk category with a 10-second animation.</CardDescription>
+            <CardTitle>KYC Risk Status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {!application ? (
@@ -128,18 +129,15 @@ export default function DashboardPage() {
               </div>
             ) : statusRequested ? (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Revealing in…</span>
-                  <span>{countdown}s</span>
-                </div>
-                <Progress value={((10 - countdown) / 10) * 100} />
+                <p className="text-sm text-muted-foreground">Loading…</p>
+                <Progress value={((LOADING_DURATION - countdown) / LOADING_DURATION) * 100} />
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">Click below to simulate the status fetch.</p>
+              <p className="text-xs text-muted-foreground">Click below to fetch the KYC status.</p>
             )}
             {statusError ? <p className="text-xs text-red-500">{statusError}</p> : null}
             <Button className="w-full" disabled={!application || (statusRequested && countdown > 0)} onClick={triggerStatusCheck}>
-              {!application ? "Create profile first" : statusRequested && countdown > 0 ? `Revealing in ${countdown}s` : "Check status"}
+              {!application ? "Create profile first" : statusRequested && countdown > 0 ? "Loading…" : "Check status"}
             </Button>
           </CardContent>
         </Card>
