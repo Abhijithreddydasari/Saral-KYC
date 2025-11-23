@@ -115,6 +115,34 @@ class DocumentPipeline:
         )
         return doc
 
+    async def _run_full_analysis(
+        self,
+        saved_path: Path,
+        doc: DocumentArtifact,
+        application: KycApplication,
+    ) -> DocumentInsights:
+        """Execute the full document analysis respecting pipeline mode settings."""
+        file_path = saved_path if isinstance(saved_path, Path) else Path(saved_path)
+        if self.mock_mode:
+            return self._mock_insights(file_path, doc.doc_type)
+
+        historical_entities = self._historical_entities(application)
+
+        def _execute() -> DocumentInsights:
+            return self._analyze_file(file_path, doc.doc_type, historical_entities)
+
+        try:
+            return await asyncio.to_thread(_execute)
+        except Exception:
+            doc.status = DocumentStatus.FAILED
+            logger.exception(
+                "Document analysis failed doc_id=%s doc_type=%s mode=%s",
+                doc.id,
+                doc.doc_type.value,
+                self.pipeline_mode,
+            )
+            raise
+
     def analyze_stored_document(self, application: KycApplication, doc: DocumentArtifact) -> DocumentArtifact:
         if not doc.storage_path:
             raise ValueError("Document storage path missing; cannot analyze.")

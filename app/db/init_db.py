@@ -7,7 +7,7 @@ from app.db.base import SQLModel as BaseModel  # noqa
 from app.db.session import engine
 from app.models.user import User
 
-ADMIN_EMAIL = "admin@saral"
+ADMIN_EMAIL = "admin@saral.dev"
 ADMIN_PASSWORD = "Admin!23"
 
 

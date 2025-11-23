@@ -19,13 +19,8 @@ export default function HomePage() {
             assistant—all backed by FastAPI.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <Link href="/dashboard" className="inline-block">
-              <Button size="lg">Open dashboard</Button>
-            </Link>
-            <Link href="/wizard" className="inline-block">
-              <Button size="lg" variant="outline">
-                Applicant wizard
-              </Button>
+            <Link href="/login" className="inline-block">
+              <Button size="lg">Log in / Sign up</Button>
             </Link>
           </div>
         </div>
