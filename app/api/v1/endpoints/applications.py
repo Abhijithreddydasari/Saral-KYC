@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 import mimetypes
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
 from app.api.deps.auth import get_current_user, get_optional_user
 from app.api.deps.db import get_db
+from app.core.config import get_settings
 from app.models.application import DocumentArtifact, KycApplication
 from app.models.audit import AuditAction
 from app.models.enums import ApplicationStatus, DocumentStatus, DocumentType
@@ -41,6 +43,7 @@ from app.services.risk_engine import RiskEngine
 from app.services.timeline import TimelineBuilder
 from app.models.workflow import NotificationEvent, ReviewTask
 from app.models.user import User
+from app.db.session import get_session
 
 router = APIRouter(prefix="/kyc", tags=["kyc"])
 pipeline = DocumentPipeline()
@@ -49,6 +52,8 @@ guidance_engine = GuidanceEngine()
 notification_service = NotificationService()
 timeline_builder = TimelineBuilder()
 audit_logger = AuditLogger()
+settings = get_settings()
+logger = logging.getLogger(__name__)
 
 MAX_DOCUMENTS = 5
 
@@ -143,6 +148,7 @@ def get_application(application_id: int, session: Session = Depends(get_db)) -> 
 )
 async def upload_document(
     application_id: int,
+    background_tasks: BackgroundTasks,
     doc_type: str = Form(...),
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
@@ -168,6 +174,22 @@ async def upload_document(
     session.add(artifact)
     session.flush()
 
+    if settings.doc_enable_async_processing:
+        pipeline.store_document_file(application, artifact, file)
+        artifact.status = DocumentStatus.PROCESSING
+        audit_logger.record(
+            session,
+            AuditAction.DOCUMENT_UPLOADED,
+            "document_artifact",
+            str(artifact.id),
+            {"doc_type": artifact.doc_type.value},
+        )
+        session.add(artifact)
+        session.commit()
+        session.refresh(artifact)
+        background_tasks.add_task(_process_document_task, application.id, artifact.id)
+        return artifact
+
     application.documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
     artifact = await pipeline.ingest_and_analyze(application, artifact, file)
     audit_logger.record(
@@ -190,6 +212,7 @@ async def upload_document(
 )
 async def upload_liveness_check(
     application_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
@@ -211,6 +234,22 @@ async def upload_liveness_check(
     artifact = DocumentArtifact(application_id=application_id, doc_type=DocumentType.SELFIE, status=DocumentStatus.UPLOADED)
     session.add(artifact)
     session.flush()
+
+    if settings.doc_enable_async_processing:
+        pipeline.store_document_file(application, artifact, file)
+        artifact.status = DocumentStatus.PROCESSING
+        audit_logger.record(
+            session,
+            AuditAction.DOCUMENT_UPLOADED,
+            "document_artifact",
+            str(artifact.id),
+            {"doc_type": artifact.doc_type.value},
+        )
+        session.add(artifact)
+        session.commit()
+        session.refresh(artifact)
+        background_tasks.add_task(_process_document_task, application.id, artifact.id)
+        return artifact
 
     application.documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
     artifact = await pipeline.ingest_and_analyze(application, artifact, file)
@@ -455,6 +494,22 @@ def assess_risk(
     session.commit()
     session.refresh(decision)
     return decision
+
+
+def _process_document_task(application_id: int, document_id: int) -> None:
+    with get_session() as session:
+        application = session.get(KycApplication, application_id)
+        document = session.get(DocumentArtifact, document_id)
+        if not application or not document:
+            logger.warning("Background doc processing aborted app_id=%s doc_id=%s missing data", application_id, document_id)
+            return
+        application.documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
+        try:
+            pipeline.analyze_stored_document(application, document)
+            session.add(document)
+            session.commit()
+        except Exception as exc:  # pragma: no cover - background failures logged
+            logger.exception("Failed to process document in background doc_id=%s error=%s", document_id, exc)
 
 
 @router.get(

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     doc_language_mismatch_penalty: float = 0.2
     doc_layout_anomaly_threshold: float = 0.35
     doc_entity_overlap_threshold: float = 0.4
+    doc_enable_vision_stage: bool = True
+    doc_enable_ocr_stage: bool = True
+    doc_enable_embeddings_stage: bool = True
+    doc_enable_metadata_stage: bool = True
+    doc_embedding_min_chars: int = 80
+    doc_enable_async_processing: bool = False
 
     # Model Paths
     model_dir_vision: str = "./app/models_data/vision/donut-docvqa"
