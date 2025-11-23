@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     encryption_key: str = Field(default="")
     access_token_expire_minutes: int = 60
 
+    # Assistant / conversational agent
+    assistant_model_name: str = "ai4bharat/IndicBARTSS"
+    assistant_system_prompt: str = (
+        "You are Saral, a friendly multilingual compliance assistant for KYC journeys. "
+        "Be concise, polite, and reference user data when helpful."
+    )
+    assistant_default_language: str = "en"
+    assistant_max_input_tokens: int = 512
+    assistant_max_output_tokens: int = 256
+    assistant_history_limit: int = 6
+
     database_url: str = "sqlite:///./saral_kyc.db"
     storage_path: str = "./storage"
 

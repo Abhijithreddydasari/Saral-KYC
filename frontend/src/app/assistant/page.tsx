@@ -165,8 +165,15 @@ export default function AssistantPage() {
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Quick prompts</p>
                 <div className="flex flex-wrap gap-2">
                   {bootstrap.suggestion_prompts.map((prompt) => (
-                    <Button key={prompt} variant="outline" size="sm" onClick={() => setInput(prompt)} disabled={sending}>
-                      {prompt}
+                    <Button
+                      key={prompt}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setInput(prompt)}
+                      disabled={sending}
+                      className="max-w-full whitespace-normal break-words justify-start text-left"
+                    >
+                      <span className="text-xs">{prompt}</span>
                     </Button>
                   ))}
                 </div>
