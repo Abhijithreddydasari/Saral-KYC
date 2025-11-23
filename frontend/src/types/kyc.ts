@@ -34,6 +34,13 @@ export interface RiskDecisionRead {
   created_at: string;
 }
 
+export interface RiskStatusResponse {
+  category: "safe" | "medium" | "high";
+  score: number;
+  reasons: string[];
+  generated_at: string;
+}
+
 export interface TimelineEntry {
   event_type: string;
   message: string;

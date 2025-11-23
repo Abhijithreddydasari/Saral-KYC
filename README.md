@@ -75,16 +75,31 @@ uvicorn app.main:app --reload
 - Configuration lives in `app/core/config.py`. Document weights, metadata thresholds, and similarity cutoffs are now tunable without touching code.
 - New ML telemetry (metadata, layout, language, entity overlap) is surfaced in `DocumentArtifact.model_trace` and consumed by the enriched risk engine (`FeatureVector` + fairness counters).
 - Key API additions for the frontend bridge:
-  - `GET /api/v1/kyc/applications/{id}/summary`
-  - `GET /api/v1/kyc/applications/{id}/documents/{doc_id}/preview`
-  - `GET /api/v1/kyc/documents/{doc_id}/download`
-  - `GET /api/v1/assist/session/bootstrap`
+  - `POST /api/v1/auth/{signup|login|logout}` and `GET /api/v1/auth/me` for token-based auth.
+  - `GET /api/v1/kyc/applications/mine`, `POST /api/v1/kyc/applications/{id}/documents`, `POST /api/v1/kyc/applications/{id}/liveness`, and `POST /api/v1/kyc/applications/{id}/complete`.
+  - `GET /api/v1/kyc/applications/{id}/risk/status` for the delayed three-band status button.
+  - `POST /api/v1/assist/chat/stream` for multilingual streaming replies (JSON fallback still available at `/chat`).
+  - `GET /api/v1/admin/overview` + `GET /api/v1/admin/users/{id}` for the monitoring panel and graph view.
+  - Existing summary/document preview endpoints continue to power the operator console.
+- SQLite lives in `saral_kyc.db`; delete the file if you need a clean slate with the new columns (`user_id`, `parent_name`, etc.).
 
 Run the test suite any time with:
 
 ```bash
 pytest
 ```
+
+### Authentication & demo credentials
+
+- Users sign up or log in via the new `/auth` endpoints; the FastAPI layer issues opaque bearer tokens stored in the `user_session` table.
+- A seeded admin exists for demos:
+
+```
+Username: admin@saral
+Password: Admin!23
+```
+
+- Admin-only routes (admin monitoring APIs, `/admin/monitoring` UI) enforce `get_current_admin`.
 
 ----------
 
@@ -109,7 +124,13 @@ The repository now ships with a `/frontend` workspace that consumes the FastAPI 
 
 What’s included out of the box:
 
-- `src/app/wizard` — drag/drop upload stepper with live status indicators for applicants.
+- `src/app/login` + `src/app/signup` — modern auth flow backed by the FastAPI tokens.
+- `src/app/dashboard` — tile-based launcher that disables “Create KYC Profile” after completion and runs the 10-second status reveal inline.
+- `src/app/kyc/create` — multi-step wizard (basic info → documents → selfie → confetti success).
+- `src/app/kyc/status` — dedicated risk status page mirroring the delayed dashboard button.
+- `src/app/assistant` — streaming chat interface (ChatGPT-style) with multilingual suggestions + context binding.
+- `src/app/admin/monitoring` — admin-only user list, documents, explainability, and a lightweight SVG network graph.
 - `src/app/ops` — staff dashboard showing application list, risk SHAP factors, document previews, timeline, and the multilingual assistant drawer.
-- `src/lib/api-client.ts` — typed fetch wrapper that respects `NEXT_PUBLIC_API_BASE_URL`.
+- `src/app/wizard` — legacy drag/drop upload stepper kept for reference.
+- `src/lib/api-client.ts` — typed fetch wrapper with automatic bearer headers via the `AuthProvider`.
 - shadcn/ui primitives (`components/ui/*`) plus design tokens via Tailwind for quick feature work.

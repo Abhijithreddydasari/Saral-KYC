@@ -1,29 +1,30 @@
 import Link from "next/link";
 
+import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-muted/30">
-      <section className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-16">
+    <AppShell title="KYC superpowers" description="Streamlined onboarding for admins, analysts, and customers.">
+      <section className="flex flex-col gap-6">
         <div>
           <Badge className="mb-3" variant="secondary">
             Saral-KYC prototype
           </Badge>
-          <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">KYC superpowers for ops + customers</h1>
-          <p className="mt-4 max-w-3xl text-base text-muted-foreground sm:text-lg">
-            This frontend consumes the FastAPI hooks you just added: document telemetry, risk explanations, workflow nudges, and the multilingual assistant.
-            Build the upload wizard and staff dashboard on top of this scaffold.
+          <h2 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">Launch into the unified workspace</h2>
+          <p className="mt-3 max-w-3xl text-base text-muted-foreground sm:text-lg">
+            Rerun the entire onboarding loop from a single console: create applications, upload documents, check risk posture, and collaborate with the multilingual
+            assistant—all backed by FastAPI.
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link href="/ops" className="inline-block">
-              <Button size="lg">Open operator console</Button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link href="/dashboard" className="inline-block">
+              <Button size="lg">Open dashboard</Button>
             </Link>
             <Link href="/wizard" className="inline-block">
               <Button size="lg" variant="outline">
-                Preview applicant flow
+                Applicant wizard
               </Button>
             </Link>
           </div>
@@ -52,7 +53,7 @@ export default function HomePage() {
           </Card>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }
 

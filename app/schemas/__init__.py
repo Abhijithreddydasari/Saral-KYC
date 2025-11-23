@@ -1,5 +1,6 @@
 """Pydantic schema package."""
 
+from app.schemas.admin import AdminGraph, AdminMonitoringResponse, AdminRiskProfile, AdminUserOverview
 from app.schemas.application import (
     ApplicationCreate,
     ApplicationRead,
@@ -7,7 +8,8 @@ from app.schemas.application import (
     DocumentUpload,
 )
 from app.schemas.chat import ChatMessageRequest, ChatMessageResponse
-from app.schemas.risk import RiskAssessmentRequest, RiskDecisionRead
+from app.schemas.risk import RiskAssessmentRequest, RiskDecisionRead, RiskStatusResponse
+from app.schemas.user import AuthResponse, UserLoginRequest, UserRead, UserSignupRequest
 from app.schemas.workflow import (
     ApplicationTimeline,
     NotificationCreate,
@@ -25,6 +27,7 @@ __all__ = [
     "DocumentUpload",
     "RiskAssessmentRequest",
     "RiskDecisionRead",
+    "RiskStatusResponse",
     "ChatMessageRequest",
     "ChatMessageResponse",
     "ReviewCreate",
@@ -34,5 +37,13 @@ __all__ = [
     "ApplicationTimeline",
     "TimelineEntry",
     "HealthResponse",
+    "UserRead",
+    "UserSignupRequest",
+    "UserLoginRequest",
+    "AuthResponse",
+    "AdminMonitoringResponse",
+    "AdminUserOverview",
+    "AdminRiskProfile",
+    "AdminGraph",
 ]
 

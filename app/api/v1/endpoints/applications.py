@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import mimetypes
 from pathlib import Path
 from typing import List
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
+from app.api.deps.auth import get_current_user, get_optional_user
 from app.api.deps.db import get_db
 from app.models.application import DocumentArtifact, KycApplication
 from app.models.audit import AuditAction
@@ -22,7 +24,7 @@ from app.schemas.application import (
     DocumentPreviewResponse,
     DocumentRead,
 )
-from app.schemas.risk import RiskAssessmentRequest, RiskDecisionRead
+from app.schemas.risk import RiskAssessmentRequest, RiskDecisionRead, RiskStatusResponse
 from app.schemas.workflow import (
     ApplicationTimeline,
     NotificationCreate,
@@ -34,9 +36,11 @@ from app.services.audit import AuditLogger
 from app.services.document_pipeline import DocumentPipeline
 from app.services.guidance import GuidanceEngine
 from app.services.notification import NotificationService
+from app.services.risk_catalog import derive_risk_category, risk_reasons_for
 from app.services.risk_engine import RiskEngine
 from app.services.timeline import TimelineBuilder
 from app.models.workflow import NotificationEvent, ReviewTask
+from app.models.user import User
 
 router = APIRouter(prefix="/kyc", tags=["kyc"])
 pipeline = DocumentPipeline()
@@ -45,6 +49,8 @@ guidance_engine = GuidanceEngine()
 notification_service = NotificationService()
 timeline_builder = TimelineBuilder()
 audit_logger = AuditLogger()
+
+MAX_DOCUMENTS = 5
 
 _DOC_TYPE_ALIASES = {
     "application/pdf": DocumentType.PDF,
@@ -68,9 +74,22 @@ def _parse_doc_type(raw_value: str | None) -> DocumentType:
         return _DOC_TYPE_ALIASES.get(normalized, DocumentType.OTHER)
 
 
+def _assert_application_access(application: KycApplication, user: User | None) -> None:
+    if user is None:
+        return
+    if user.is_admin:
+        return
+    if application.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this application")
+
+
 @router.post("/applications", response_model=ApplicationRead, status_code=status.HTTP_201_CREATED)
-def create_application(payload: ApplicationCreate, session: Session = Depends(get_db)) -> ApplicationRead:
-    application = KycApplication(**payload.dict())
+def create_application(
+    payload: ApplicationCreate,
+    session: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+) -> ApplicationRead:
+    application = KycApplication(**payload.dict(), user_id=current_user.id if current_user else None)
     session.add(application)
     session.flush()
     audit_logger.record(
@@ -89,6 +108,18 @@ def create_application(payload: ApplicationCreate, session: Session = Depends(ge
 @router.get("/applications", response_model=List[ApplicationRead])
 def list_applications(session: Session = Depends(get_db)) -> List[ApplicationRead]:
     applications = session.exec(select(KycApplication)).all()
+    for app_obj in applications:
+        docs = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == app_obj.id)).all()
+        app_obj.documents = docs
+    return applications
+
+
+@router.get("/applications/mine", response_model=List[ApplicationRead])
+def list_my_applications(
+    session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> List[ApplicationRead]:
+    applications = session.exec(select(KycApplication).where(KycApplication.user_id == current_user.id)).all()
     for app_obj in applications:
         docs = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == app_obj.id)).all()
         app_obj.documents = docs
@@ -115,19 +146,73 @@ async def upload_document(
     doc_type: str = Form(...),
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
 ) -> DocumentRead:
     application = session.get(KycApplication, application_id)
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    _assert_application_access(application, current_user)
+
     resolved_doc_type = _parse_doc_type(doc_type)
+    if resolved_doc_type != DocumentType.SELFIE:
+        existing_docs = session.exec(
+            select(DocumentArtifact)
+            .where(DocumentArtifact.application_id == application_id)
+            .where(DocumentArtifact.doc_type != DocumentType.SELFIE)
+        ).all()
+        if len(existing_docs) >= MAX_DOCUMENTS:
+            raise HTTPException(status_code=400, detail="Maximum document uploads reached")
+
     artifact = DocumentArtifact(application_id=application_id, doc_type=resolved_doc_type, status=DocumentStatus.UPLOADED)
     session.add(artifact)
     session.flush()
 
-    documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
-    application.documents = documents
+    application.documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
+    artifact = await pipeline.ingest_and_analyze(application, artifact, file)
+    audit_logger.record(
+        session,
+        AuditAction.DOCUMENT_UPLOADED,
+        "document_artifact",
+        str(artifact.id),
+        {"doc_type": artifact.doc_type.value},
+    )
+    session.add(artifact)
+    session.commit()
+    session.refresh(artifact)
+    return artifact
 
+
+@router.post(
+    "/applications/{application_id}/liveness",
+    response_model=DocumentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_liveness_check(
+    application_id: int,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+) -> DocumentRead:
+    application = session.get(KycApplication, application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    _assert_application_access(application, current_user)
+
+    existing_selfie = session.exec(
+        select(DocumentArtifact)
+        .where(DocumentArtifact.application_id == application_id)
+        .where(DocumentArtifact.doc_type == DocumentType.SELFIE)
+    ).first()
+    if existing_selfie:
+        raise HTTPException(status_code=400, detail="Selfie already uploaded")
+
+    artifact = DocumentArtifact(application_id=application_id, doc_type=DocumentType.SELFIE, status=DocumentStatus.UPLOADED)
+    session.add(artifact)
+    session.flush()
+
+    application.documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
     artifact = await pipeline.ingest_and_analyze(application, artifact, file)
     audit_logger.record(
         session,
@@ -175,6 +260,33 @@ def escalate_application(
     session.commit()
     session.refresh(review)
     return review
+
+
+@router.post(
+    "/applications/{application_id}/complete",
+    response_model=ApplicationRead,
+)
+def complete_application(
+    application_id: int,
+    session: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+) -> ApplicationRead:
+    application = session.get(KycApplication, application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    _assert_application_access(application, current_user)
+
+    now = datetime.utcnow()
+    application.status = ApplicationStatus.PENDING_REVIEW
+    application.submitted_at = now
+    application.completed_at = now
+
+    session.add(application)
+    session.commit()
+    session.refresh(application)
+    application.documents = session.exec(select(DocumentArtifact).where(DocumentArtifact.application_id == application_id)).all()
+    return application
 
 
 @router.post(
@@ -343,4 +455,24 @@ def assess_risk(
     session.commit()
     session.refresh(decision)
     return decision
+
+
+@router.get(
+    "/applications/{application_id}/risk/status",
+    response_model=RiskStatusResponse,
+)
+def get_risk_status(
+    application_id: int,
+    session: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+) -> RiskStatusResponse:
+    application = session.get(KycApplication, application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    _assert_application_access(application, current_user)
+
+    category, normalized = derive_risk_category(application.risk_score, application.reference_id)
+    reasons = risk_reasons_for(category)
+    return RiskStatusResponse(category=category, score=normalized, reasons=reasons, generated_at=datetime.utcnow())
 

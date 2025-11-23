@@ -637,9 +637,9 @@ class MLClientRegistry:
 
     vision: VisionModelClient
     ocr: OCRClient
-    ner: NERClient
     embeddings: EmbeddingClient
     forgery: ForgeryClient
+    ner: Optional[NERClient] = None
 
     @classmethod
     def default(
@@ -652,9 +652,9 @@ class MLClientRegistry:
         return cls(
             vision=VisionModelClient(model_name=vision_model_name),
             ocr=OCRClient(languages=ocr_languages),
-            ner=NERClient(),
             embeddings=EmbeddingClient(model_name=embedding_model_name, threshold=embedding_threshold),
             forgery=ForgeryClient(),
+            ner=NERClient(),
         )
 
 
