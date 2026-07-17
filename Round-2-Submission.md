@@ -20,31 +20,33 @@ Saral-KYC automates the entire Know Your Customer journey with an AI-first FastA
 
 ```mermaid
 flowchart LR
-    subgraph Frontend (Next.js)
+    subgraph Frontend["Frontend (Next.js)"]
         Wizard["Applicant Wizard"]
         AssistantUI["Assistant Console"]
         AdminConsole["Admin Monitoring"]
     end
-    subgraph FastAPI Routers
+    subgraph FastAPIRouters["FastAPI Routers"]
         AuthAPI[/auth/]
         KYCAPI[/kyc/]
         AssistAPI[/assist/]
         AdminAPI[/admin/]
     end
     subgraph Services
-        Pipeline["DocumentPipeline\nvision+ocr+forgery+embeddings"]
+        Pipeline["DocumentPipeline
+vision+ocr+forgery+embeddings"]
         Storage["LocalBlobStorage"]
         Risk["RiskEngine + RiskCatalog"]
-        Timeline["TimelineBuilder\nGuidanceEngine"]
+        Timeline["TimelineBuilder
+GuidanceEngine"]
         Notify["NotificationService"]
         Audit["AuditLogger"]
-        AssistantCore["ConversationalAgent\n(IndicBARTSS)"]
+        AssistantCore["ConversationalAgent
+(IndicBARTSS)"]
     end
-    subgraph Data Plane
+    subgraph DataPlane["Data Plane"]
         DB[(SQLModel on SQLite)]
-        Files[((storage/<ref>/...))]
+        Files(((storage/ref/...)))
     end
-
     Wizard -->|/auth, /kyc| AuthAPI
     AuthAPI --> DB
     Wizard --> KYCAPI
@@ -58,10 +60,7 @@ flowchart LR
     Risk --> DB
     KYCAPI --> Timeline
     Timeline --> DB
-    KYCAPI --> Notify
-    Notify --> DB
-    {AssistAPI,AdminAPI,KYCAPI} --> Audit
-    AssistAPI --> AssistantCore
+
 ```
 
 - **Core services:** `app/api/v1` exposes routers for auth, KYC, admin monitoring, health, and the assistant. Each router composes dedicated services (`DocumentPipeline`, `RiskEngine`, `AuditLogger`, `TimelineBuilder`, `NotificationService`, `GuidanceEngine`) so business logic stays outside HTTP handlers.
